@@ -13,21 +13,29 @@ const qrcode = require("qrcode-terminal");
 const EventEmitter = require("events");
 const fs = require("fs");
 
-const sendMessage = require("./api/sendMessage");
-const sendFile = require("./api/sendFile");
-const reactMsg = require("./api/react");
-const deleteMessage = require("./api/deleteMessage");
-const editMessage = require("./api/editMessage");
-const changeNickname = require("./api/changeNickname");
-const sendTypingIndicator = require("./api/sendTypingIndicator");
-const getUserInfo = require("./api/getUserInfo");
-const getThreadInfo = require("./api/getThreadInfo");
-const getThreadList = require("./api/getThreadList");
-const addUserToGroup = require("./api/addUserToGroup");
-const removeUserFromGroup = require("./api/removeUserFromGroup");
-const changeGroupName = require("./api/changeGroupName");
-const createGroup = require("./api/createGroup");
-const listenEvents = require("./api/listenEvents");
+const sendMessage = require("./sendMessage");
+const sendFile = require("./sendFile");
+const reactMsg = require("./react");
+const setMessageReaction = require("./setMessageReaction");
+const unsendMessage = require("./unsendMessage");
+const deleteMessage = require("./deleteMessage");
+const editMessage = require("./editMessage");
+const changeNickname = require("./changeNickname");
+const sendTypingIndicator = require("./sendTypingIndicator");
+const getUserInfo = require("./getUserInfo");
+const getThreadInfo = require("./getThreadInfo");
+const getThreadList = require("./getThreadList");
+const addUserToGroup = require("./addUserToGroup");
+const removeUserFromGroup = require("./removeUserFromGroup");
+const changeGroupName = require("./changeGroupName");
+const changeGroupImage = require("./changeGroupImage");
+const changeAvatar = require("./changeAvatar");
+const changeThreadEmoji = require("./changeThreadEmoji");
+const changeThreadColor = require("./changeThreadColor");
+const createGroup = require("./createGroup");
+const getAppState = require("./getAppState");
+const httpPost = require("./httpPost");
+const listenEvents = require("./listenEvents");
 
 const { normaliseJID, jidToID, idToJID } = require("./utils");
 
@@ -93,7 +101,9 @@ async function login(options = {}) {
     sock.ev.on(evName, (data) => emitter.emit(evName, data));
   }
 
-  // Build FCA-compatible API object
+  // Build FCA-compatible API object.
+  // Method names and signatures mirror mahmud-fca's src/<method>.js layout
+  // 1:1 so bot commands written against either library work unmodified.
   const api = {
     _sock: sock,
 
@@ -101,21 +111,31 @@ async function login(options = {}) {
     sendMessage: sendMessage(sock),
     sendFile: sendFile(sock),
     react: reactMsg(sock),
+    setMessageReaction: setMessageReaction(sock),
+    unsendMessage: unsendMessage(sock),
     deleteMessage: deleteMessage(sock),
     editMessage: editMessage(sock),
-    changeNickname: changeNickname(sock),
     sendTypingIndicator: sendTypingIndicator(sock),
 
     // ── Info ────────────────────────────────────────────────────────────────
     getUserInfo: getUserInfo(sock),
     getThreadInfo: getThreadInfo(sock),
     getThreadList: getThreadList(sock),
+    getAppState: getAppState(sock),
 
     // ── Group management ────────────────────────────────────────────────────
     addUserToGroup: addUserToGroup(sock),
     removeUserFromGroup: removeUserFromGroup(sock),
     changeGroupName: changeGroupName(sock),
+    changeGroupImage: changeGroupImage(sock),
+    changeAvatar: changeAvatar(sock),
+    changeNickname: changeNickname(sock),
+    changeThreadEmoji: changeThreadEmoji(sock),
+    changeThreadColor: changeThreadColor(sock),
     createGroup: createGroup(sock),
+
+    // ── Networking ──────────────────────────────────────────────────────────
+    httpPost: httpPost(sock),
 
     // ── Events ──────────────────────────────────────────────────────────────
     listenMqtt: listenEvents(sock, emitter),

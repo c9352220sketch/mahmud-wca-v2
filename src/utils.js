@@ -131,6 +131,29 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+/**
+ * messageID -> { jid, fromMe } cache.
+ * FCA-style calls like setMessageReaction(reaction, messageID, cb) and
+ * unsendMessage(messageID, cb) don't receive a threadID, so every message
+ * (sent or received) is cached here to resolve which chat it belongs to.
+ * Bounded to avoid unbounded memory growth on long-running bots.
+ */
+const MESSAGE_CACHE_LIMIT = 5000;
+const messageCache = new Map();
+
+function cacheMessage(messageID, jid, fromMe = false) {
+  if (!messageID || !jid) return;
+  if (messageCache.size >= MESSAGE_CACHE_LIMIT) {
+    const oldestKey = messageCache.keys().next().value;
+    messageCache.delete(oldestKey);
+  }
+  messageCache.set(messageID, { jid, fromMe });
+}
+
+function resolveMessageJID(messageID) {
+  return messageCache.get(messageID)?.jid || null;
+}
+
 module.exports = {
   normaliseJID,
   jidToID,
@@ -144,4 +167,6 @@ module.exports = {
   extractReaction,
   mediaType,
   sleep,
+  cacheMessage,
+  resolveMessageJID,
 };
