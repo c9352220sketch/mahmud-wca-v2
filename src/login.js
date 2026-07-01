@@ -11,13 +11,15 @@ const {
 const pino = require("pino");
 const qrcode = require("qrcode-terminal");
 const EventEmitter = require("events");
-const path = require("path");
 const fs = require("fs");
 
 const sendMessage = require("./api/sendMessage");
 const sendFile = require("./api/sendFile");
 const reactMsg = require("./api/react");
 const deleteMessage = require("./api/deleteMessage");
+const editMessage = require("./api/editMessage");
+const changeNickname = require("./api/changeNickname");
+const sendTypingIndicator = require("./api/sendTypingIndicator");
 const getUserInfo = require("./api/getUserInfo");
 const getThreadInfo = require("./api/getThreadInfo");
 const getThreadList = require("./api/getThreadList");
@@ -27,17 +29,8 @@ const changeGroupName = require("./api/changeGroupName");
 const createGroup = require("./api/createGroup");
 const listenEvents = require("./api/listenEvents");
 
-const { normaliseJID } = require("./utils");
+const { normaliseJID, jidToID, idToJID } = require("./utils");
 
-/**
- * login(options) → { api, ev }
- *
- * Options:
- *   authFolder  - path to store session files (default: "auth_info")
- *   browser     - [name, browser, version]
- *   printQR     - boolean (default: true)
- *   logger      - pino logger level (default: "silent")
- */
 async function login(options = {}) {
   const {
     authFolder = "auth_info",
@@ -50,7 +43,6 @@ async function login(options = {}) {
 
   const { state, saveCreds } = await useMultiFileAuthState(authFolder);
   const { version } = await fetchLatestBaileysVersion();
-
   const logger = pino({ level: logLevel });
 
   const sock = makeWASocket({
@@ -68,93 +60,94 @@ async function login(options = {}) {
   });
 
   const emitter = new EventEmitter();
-
   sock.ev.on("creds.update", saveCreds);
 
   sock.ev.on("connection.update", (update) => {
     const { connection, lastDisconnect, qr } = update;
-
     if (qr && printQR) {
       qrcode.generate(qr, { small: true });
       console.log("\n📱 Scan the QR code above with WhatsApp to login.\n");
     }
-
     if (connection === "open") {
-      console.log("✅ mahmud-wca: WhatsApp connected successfully!");
+      console.log("✅ mahmud-wca: WhatsApp connected!");
       emitter.emit("connection.open", sock.user);
     }
-
     if (connection === "close") {
       const reason = lastDisconnect?.error?.output?.statusCode;
       const shouldReconnect = reason !== DisconnectReason.loggedOut;
-
+      emitter.emit("connection.close", { reason, shouldReconnect });
       if (shouldReconnect) {
         console.log("⚡ mahmud-wca: Reconnecting...");
-        emitter.emit("connection.close", { reason, shouldReconnect: true });
       } else {
-        console.log("🔴 mahmud-wca: Logged out. Please re-scan QR.");
-        emitter.emit("connection.close", { reason, shouldReconnect: false });
+        console.log("🔴 mahmud-wca: Logged out. Re-scan QR.");
       }
     }
   });
 
-  // Forward all Baileys events to the emitter
-  sock.ev.on("messages.upsert", (data) => emitter.emit("messages.upsert", data));
-  sock.ev.on("messages.update", (data) => emitter.emit("messages.update", data));
-  sock.ev.on("message-receipt.update", (data) => emitter.emit("message-receipt.update", data));
-  sock.ev.on("groups.update", (data) => emitter.emit("groups.update", data));
-  sock.ev.on("group-participants.update", (data) => emitter.emit("group-participants.update", data));
-  sock.ev.on("presence.update", (data) => emitter.emit("presence.update", data));
-  sock.ev.on("chats.update", (data) => emitter.emit("chats.update", data));
-  sock.ev.on("contacts.update", (data) => emitter.emit("contacts.update", data));
-  sock.ev.on("call", (data) => emitter.emit("call", data));
+  // Forward all Baileys events
+  for (const evName of [
+    "messages.upsert", "messages.update", "message-receipt.update",
+    "groups.update", "group-participants.update", "presence.update",
+    "chats.update", "contacts.update", "call",
+  ]) {
+    sock.ev.on(evName, (data) => emitter.emit(evName, data));
+  }
 
-  // Build the API object (FCA-compatible interface)
+  // Build FCA-compatible API object
   const api = {
-    // Raw Baileys socket (advanced usage)
     _sock: sock,
 
-    // ── Messaging ──────────────────────────────────────────────
+    // ── Messaging ───────────────────────────────────────────────────────────
     sendMessage: sendMessage(sock),
     sendFile: sendFile(sock),
     react: reactMsg(sock),
     deleteMessage: deleteMessage(sock),
+    editMessage: editMessage(sock),
+    changeNickname: changeNickname(sock),
+    sendTypingIndicator: sendTypingIndicator(sock),
 
-    // ── User & Thread info ─────────────────────────────────────
+    // ── Info ────────────────────────────────────────────────────────────────
     getUserInfo: getUserInfo(sock),
     getThreadInfo: getThreadInfo(sock),
     getThreadList: getThreadList(sock),
 
-    // ── Group management ───────────────────────────────────────
+    // ── Group management ────────────────────────────────────────────────────
     addUserToGroup: addUserToGroup(sock),
     removeUserFromGroup: removeUserFromGroup(sock),
     changeGroupName: changeGroupName(sock),
     createGroup: createGroup(sock),
 
-    // ── Events listener ────────────────────────────────────────
+    // ── Events ──────────────────────────────────────────────────────────────
     listenMqtt: listenEvents(sock, emitter),
 
-    // ── Misc helpers ───────────────────────────────────────────
-    getCurrentUserID: () => normaliseJID(sock.user?.id || ""),
+    // ── Helpers ─────────────────────────────────────────────────────────────
+    getCurrentUserID: () => jidToID(normaliseJID(sock.user?.id || "")),
     getBotInfo: () => sock.user || {},
 
-    /** Mark a thread as read */
     markAsRead: async (threadID) => {
-      const jid = threadID.includes("@") ? threadID : threadID.includes("-") ? `${threadID}@g.us` : `${threadID}@s.whatsapp.net`;
-      await sock.readMessages([{ remoteJid: jid, id: "all" }]);
+      const jid = idToJID(threadID);
+      await sock.readMessages([{ remoteJid: jid, id: "all" }]).catch(() => {});
     },
 
-    /** Set bot presence (available / unavailable / composing / recording) */
     setPresence: async (threadID, type = "available") => {
-      const jid = threadID.includes("@") ? threadID : `${threadID}@s.whatsapp.net`;
-      await sock.sendPresenceUpdate(type, jid);
+      const jid = idToJID(threadID);
+      await sock.sendPresenceUpdate(type, jid).catch(() => {});
     },
 
-    /** Raw event emitter access */
-    on: (event, listener) => emitter.on(event, listener),
-    once: (event, listener) => emitter.once(event, listener),
-    off: (event, listener) => emitter.off(event, listener),
-    emit: (event, ...args) => emitter.emit(event, ...args),
+    // FCA compat — no-op for WA
+    changeBlockedStatus: async () => {},
+    setTitle: async (title, threadID) => {
+      if (threadID) {
+        const jid = idToJID(threadID);
+        await sock.groupUpdateSubject(jid, title).catch(() => {});
+      }
+    },
+
+    // EventEmitter passthrough
+    on: (e, l) => emitter.on(e, l),
+    once: (e, l) => emitter.once(e, l),
+    off: (e, l) => emitter.off(e, l),
+    emit: (e, ...a) => emitter.emit(e, ...a),
   };
 
   return api;
